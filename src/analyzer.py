@@ -21,9 +21,10 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel
 
-# gemini-2.5-flash is on Google's free tier as of when this was written --
-# double check current model IDs/limits at ai.google.dev if this has drifted.
-MODEL = os.getenv("OPS_INSIGHTS_MODEL", "gemini-2.5-flash")
+# A rolling alias, not a pinned version -- Google points this at whatever their
+# current recommended free-tier flash model is, so it doesn't 404 every time a
+# specific dated model ID (e.g. gemini-2.5-flash) gets retired for new users.
+MODEL = os.getenv("OPS_INSIGHTS_MODEL", "gemini-flash-latest")
 Z_SCORE_THRESHOLD = 2.0
 
 
