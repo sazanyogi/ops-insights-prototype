@@ -16,6 +16,17 @@ from src.data_generator import add_derived_metrics, generate_shift_data
 
 load_dotenv()
 
+# Streamlit Community Cloud stores secrets separately from .env / os.environ.
+# The genai SDK only reads os.environ, so mirror any Cloud-configured secret
+# into it here -- local dev (.env) is unaffected since this only fires when
+# the env var isn't already set.
+if not os.getenv("GEMINI_API_KEY"):
+    try:
+        if "GEMINI_API_KEY" in st.secrets:
+            os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        pass  # no secrets.toml locally -- expected in local dev
+
 st.set_page_config(page_title="Ops Insights Prototype", page_icon="🏭", layout="wide")
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
