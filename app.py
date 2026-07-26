@@ -1,7 +1,7 @@
 """Ops Insights Prototype -- Streamlit dashboard.
 
 Upload or generate shift/production data, see the operational trends, then
-ask Claude to summarize the period and flag anomalies worth a supervisor's
+ask Gemini to summarize the period and flag anomalies worth a supervisor's
 attention.
 """
 
@@ -47,8 +47,8 @@ with st.sidebar:
 
     if "OPS_INSIGHTS_MODEL" in os.environ:
         st.caption(f"Model: `{os.environ['OPS_INSIGHTS_MODEL']}`")
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        st.warning("ANTHROPIC_API_KEY not set -- copy `.env.example` to `.env` to enable analysis.", icon="⚠️")
+    if not os.getenv("GEMINI_API_KEY"):
+        st.warning("GEMINI_API_KEY not set -- copy `.env.example` to `.env` to enable analysis.", icon="⚠️")
 
 if "df" not in st.session_state:
     st.info("Generate or upload data to get started.")
@@ -80,9 +80,9 @@ with st.expander("Raw shift log"):
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 st.divider()
-st.subheader("Claude analysis")
+st.subheader("Gemini analysis")
 
-if st.button("Analyze with Claude", type="primary", disabled=not os.getenv("ANTHROPIC_API_KEY")):
+if st.button("Analyze with Gemini", type="primary", disabled=not os.getenv("GEMINI_API_KEY")):
     with st.spinner("Reviewing the shift log..."):
         try:
             st.session_state.result = analyze(df)

@@ -1,10 +1,10 @@
-"""Anomaly candidates + Claude-powered narrative analysis for shift data.
+"""Anomaly candidates + Gemini-powered narrative analysis for shift data.
 
 Two stages, same shape as a cheap-filter-then-LLM pipeline: pandas/numpy
 first narrows a full shift log down to (a) statistical outlier rows,
 (b) shift-level cohort bias, and (c) cross-line correlated events, using
 plain z-scores and group means -- no LLM call needed for that part. Only the
-compact aggregates and candidate rows are sent to Claude, which explains,
+compact aggregates and candidate rows are sent to Gemini, which explains,
 prioritizes, and writes up what a floor supervisor would actually want to
 read, rather than a wall of raw numbers.
 """
@@ -13,49 +13,34 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Literal
 
 import numpy as np
 import pandas as pd
-from anthropic import Anthropic
+from google import genai
+from google.genai import types
+from pydantic import BaseModel
 
-MODEL = os.getenv("OPS_INSIGHTS_MODEL", "claude-opus-4-8")
+# gemini-2.5-flash is on Google's free tier as of when this was written --
+# double check current model IDs/limits at ai.google.dev if this has drifted.
+MODEL = os.getenv("OPS_INSIGHTS_MODEL", "gemini-2.5-flash")
 Z_SCORE_THRESHOLD = 2.0
 
-RESULT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "period_summary": {
-            "type": "string",
-            "description": "2-4 sentence plain-language summary of how the period went overall.",
-        },
-        "anomalies": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "severity": {"type": "string", "enum": ["low", "medium", "high"]},
-                    "scope": {
-                        "type": "string",
-                        "description": "What this affects, e.g. 'Line 3, all shifts' or 'Night shift, all lines'.",
-                    },
-                    "evidence": {"type": "string", "description": "The specific numbers that support this finding."},
-                    "likely_cause": {"type": "string"},
-                    "recommended_action": {"type": "string"},
-                },
-                "required": ["title", "severity", "scope", "evidence", "likely_cause", "recommended_action"],
-                "additionalProperties": False,
-            },
-        },
-        "highlights": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "2-4 short positive or neutral callouts worth noting alongside the anomalies.",
-        },
-    },
-    "required": ["period_summary", "anomalies", "highlights"],
-    "additionalProperties": False,
-}
+
+class Anomaly(BaseModel):
+    title: str
+    severity: Literal["low", "medium", "high"]
+    scope: str  # what this affects, e.g. "Line 3, all shifts" or "Night shift, all lines"
+    evidence: str  # the specific numbers that support this finding
+    likely_cause: str
+    recommended_action: str
+
+
+class AnalysisResult(BaseModel):
+    period_summary: str  # 2-4 sentence plain-language summary of how the period went overall
+    anomalies: list[Anomaly]
+    highlights: list[str]  # 2-4 short positive or neutral callouts worth noting alongside the anomalies
+
 
 SYSTEM_PROMPT = """You are an experienced manufacturing operations analyst reviewing shift \
 production data for a plant supervisor. You've spent real time on production floors, so you \
@@ -161,33 +146,24 @@ def summarize_for_prompt(df: pd.DataFrame) -> dict:
 
 
 def analyze(df: pd.DataFrame) -> dict:
-    """Run the full pipeline: stats pre-filter -> Claude synthesis. Returns parsed JSON dict."""
+    """Run the full pipeline: stats pre-filter -> Gemini synthesis. Returns parsed JSON dict."""
     payload = {
         "aggregate_stats": summarize_for_prompt(df),
         "statistically_flagged_candidates": find_candidate_anomalies(df),
     }
 
-    client = Anthropic()
-    response = client.messages.create(
+    client = genai.Client()  # reads GEMINI_API_KEY (or GOOGLE_API_KEY) from the environment
+    response = client.models.generate_content(
         model=MODEL,
-        max_tokens=4096,
-        thinking={"type": "adaptive"},
-        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": RESULT_SCHEMA}},
-        system=SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": "Here is the shift production data for the period:\n\n"
-                + json.dumps(payload, indent=2),
-            }
-        ],
+        contents="Here is the shift production data for the period:\n\n" + json.dumps(payload, indent=2),
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            response_mime_type="application/json",
+            response_schema=AnalysisResult,
+        ),
     )
 
-    if response.stop_reason == "refusal":
-        raise RuntimeError("Claude declined to analyze this data (safety refusal).")
+    if not response.text:
+        raise RuntimeError(f"Empty response from Gemini (finish reason: {response.candidates[0].finish_reason}).")
 
-    text_block = next((b for b in response.content if b.type == "text"), None)
-    if text_block is None:
-        raise RuntimeError(f"No text content in response (stop_reason={response.stop_reason}).")
-
-    return json.loads(text_block.text)
+    return json.loads(response.text)

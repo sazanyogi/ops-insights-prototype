@@ -6,14 +6,14 @@ Point it at a shift log (or generate a realistic synthetic one) and it surfaces 
 
 ## Why this exists
 
-Manufacturing floors generate a shift log every day -- units produced, downtime minutes, defect counts -- but turning that into "here's what actually needs attention" usually falls on whoever's willing to stare at a spreadsheet. This prototype automates the first pass: cheap statistics catch the outliers, Claude explains them in plain language and tells one-off incidents apart from systemic patterns.
+Manufacturing floors generate a shift log every day -- units produced, downtime minutes, defect counts -- but turning that into "here's what actually needs attention" usually falls on whoever's willing to stare at a spreadsheet. This prototype automates the first pass: cheap statistics catch the outliers, an LLM explains them in plain language and tells one-off incidents apart from systemic patterns.
 
 ## How it works
 
 1. **Data** -- `src/data_generator.py` produces a synthetic shift log (date x shift x line) with realistic seeded patterns: a multi-shift breakdown streak on one line, a systemic night-shift defect-rate drift, and a same-day material shortage that hits every line at once. Or upload your own CSV in the same shape.
-2. **Statistical pre-filter** -- `src/analyzer.py` runs three cheap passes with pandas/numpy *before* any LLM call: per-line z-scores on downtime and defect rate (point outliers), shift-level cohort averages (systemic bias, e.g. "Night shift runs consistently worse"), and cross-line correlation by date (an event that hit every line at once). Only the aggregate stats and flagged candidates go to Claude -- never the raw per-row log -- to keep token usage down as the log grows.
-3. **Claude synthesis** -- Claude gets the aggregates plus the candidate list and a manufacturing-analyst system prompt, and returns a structured (JSON-schema-constrained) period summary, a severity-ranked anomaly list with likely cause and recommended action, and a few highlights.
-4. **Dashboard** -- Streamlit shows the trends (OEE by line, downtime by reason, defect rate by shift) and the Claude readout side by side.
+2. **Statistical pre-filter** -- `src/analyzer.py` runs three cheap passes with pandas/numpy *before* any LLM call: per-line z-scores on downtime and defect rate (point outliers), shift-level cohort averages (systemic bias, e.g. "Night shift runs consistently worse"), and cross-line correlation by date (an event that hit every line at once). Only the aggregate stats and flagged candidates go to the model -- never the raw per-row log -- to keep token usage down as the log grows.
+3. **LLM synthesis** -- Google's Gemini API gets the aggregates plus the candidate list and a manufacturing-analyst system prompt, and returns a structured (schema-constrained) period summary, a severity-ranked anomaly list with likely cause and recommended action, and a few highlights.
+4. **Dashboard** -- Streamlit shows the trends (OEE by line, downtime by reason, defect rate by shift) and the analysis readout side by side.
 
 ## Setup
 
@@ -21,11 +21,11 @@ Manufacturing floors generate a shift log every day -- units produced, downtime 
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env  # add your ANTHROPIC_API_KEY
+cp .env.example .env  # add your GEMINI_API_KEY (free at aistudio.google.com/apikey)
 streamlit run app.py
 ```
 
-The dashboard works without an API key -- you can generate data and explore the charts. The "Analyze with Claude" button needs `ANTHROPIC_API_KEY` set.
+The dashboard works without an API key -- you can generate data and explore the charts. The "Analyze with Gemini" button needs `GEMINI_API_KEY` set.
 
 ## Bringing your own data
 
@@ -33,10 +33,13 @@ Upload a CSV with these columns: `date, shift, line, units_target, units_produce
 
 ## Stack
 
-Python, [Streamlit](https://streamlit.io), [Anthropic Claude API](https://platform.claude.com) (structured outputs via `output_config.format`), pandas, numpy.
+Python, [Streamlit](https://streamlit.io), [Google Gemini API](https://ai.google.dev) (structured output via a Pydantic response schema, on Google's free tier), pandas, numpy.
+
+The analysis call lives entirely in `src/analyzer.py` behind a plain `analyze(df) -> dict` function -- swapping in a different provider (e.g. Claude, for higher-quality analysis at a small per-call cost) means rewriting that one file, not the dashboard or the data pipeline.
 
 ## Honest limitations
 
-- The anomaly detection is intentionally simple -- z-scores and group means, not a real time-series model. That's a deliberate choice for a prototype: it's auditable and explainable, and Claude's job is reasoning about *why* something looks off, not detecting the outlier itself.
+- The anomaly detection is intentionally simple -- z-scores and group means, not a real time-series model. That's a deliberate choice for a prototype: it's auditable and explainable, and the LLM's job is reasoning about *why* something looks off, not detecting the outlier itself.
 - No persistence -- every session starts from freshly generated (or uploaded) data. A real deployment would want a database and a way to compare period-over-period.
 - The synthetic data generator's "realism" is calibrated by eye against general manufacturing reporting conventions, not a specific plant's actual data.
+- Started on Claude, switched to Gemini for its free tier before ever running a live analysis call -- a real tradeoff (no cost vs. a few cents per call), noted here rather than hidden. The pipeline's LLM call is isolated to one function specifically so that swap is cheap to make in either direction.
